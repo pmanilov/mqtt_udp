@@ -23,7 +23,7 @@ public abstract class LoopRunner {
 	public LoopRunner(String name) {
 		threadName = name;
 	}
-	
+
 	// ------------------------------------------------------------
 	// For user to override
 	// ------------------------------------------------------------
@@ -31,7 +31,7 @@ public abstract class LoopRunner {
 	/**
 	 * To be overridden in subclass. On start do preparations needed.
 	 * 
-	 * @throws IOException In case of IO error
+	 * @throws IOException           In case of IO error
 	 * 
 	 * @throws MqttProtocolException In case of MQTT/UDP protocol error
 	 */
@@ -40,7 +40,7 @@ public abstract class LoopRunner {
 	/**
 	 * To be overridden in subclass. Called in loop to do actual work.
 	 * 
-	 * @throws IOException In case of IO error
+	 * @throws IOException           In case of IO error
 	 * 
 	 * @throws MqttProtocolException In case of MQTT/UDP protocol error
 	 */
@@ -49,14 +49,11 @@ public abstract class LoopRunner {
 	/**
 	 * To be overridden in subclass. On stop do cleanup needed.
 	 * 
-	 * @throws IOException In case of IO error
+	 * @throws IOException           In case of IO error
 	 * 
 	 * @throws MqttProtocolException In case of MQTT/UDP protocol error
 	 */
 	protected abstract void onStop() throws IOException, MqttProtocolException;
-
-
-
 
 	// ------------------------------------------------------------
 	// Incoming data process thread
@@ -65,48 +62,55 @@ public abstract class LoopRunner {
 	volatile private boolean run = false;
 	private final String threadName;
 
-	public boolean isRunning() { return run; }
-
+	public boolean isRunning() {
+		return run;
+	}
 
 	/**
 	 * Request to start reception loop thread.
 	 */
-	public void requestStart()
-	{
-		if(isRunning()) return;
+	public void requestStart() {
+		if (isRunning())
+			return;
 		start();
 	}
 
 	/**
 	 * Request to stop reception loop thread.
 	 */
-	public void requestStop() { run = false; }
+	public void requestStop() {
+		run = false;
+	}
 
 	/**
 	 * Worker: start loop thread.
 	 */
 	protected void start() {
 		Runnable target = makeLoopRunnable();
-		Thread t = new Thread( target, threadName );
+		Thread t = new Thread(target, threadName);
 		t.start();
 	}
 
+	private void loop() throws IOException, MqttProtocolException {
 
-	private void loop() throws IOException, MqttProtocolException 
-	{
-		
 		onStart();
 
 		run = true;
 
-		while(run)
-		{
-			step();
+		while (run) {
+			try {
+				step();
+			} catch (MqttProtocolException e) {
+				GlobalErrorHandler.handleError(ErrorType.Protocol, e);
+				// continue loop — one bad packet should not stop reception
+			} catch (RuntimeException e) {
+				GlobalErrorHandler.handleError(ErrorType.Protocol, e);
+				// continue loop — one bad packet should not stop reception
+			}
 		}
 
 		onStop();
 	}
-
 
 	private Runnable makeLoopRunnable() {
 		return new Runnable() {
@@ -118,19 +122,17 @@ public abstract class LoopRunner {
 					GlobalErrorHandler.handleError(ErrorType.IO, e);
 				} catch (MqttProtocolException e) {
 					GlobalErrorHandler.handleError(ErrorType.Protocol, e);
-				}				
+				}
 			}
 		};
 	}
 
-	
-	public static void sleep(long msec)
-	{
+	public static void sleep(long msec) {
 		try {
 			Thread.sleep(msec);
 		} catch (InterruptedException e) {
 			// Ignore
-		}		
+		}
 	}
 
 }

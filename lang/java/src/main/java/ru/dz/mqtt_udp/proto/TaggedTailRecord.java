@@ -5,63 +5,79 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.concurrent.atomic.AtomicReference;
 
+import ru.dz.mqtt_udp.MqttProtocolException;
+import ru.dz.mqtt_udp.util.ErrorType;
+import ru.dz.mqtt_udp.util.GlobalErrorHandler;
 import ru.dz.mqtt_udp.util.MqttUdpRuntimeException;
 
 /**
- * <p>Protocol extension. See https://github.com/dzavalishin/mqtt_udp/wiki/Tagged-Tail</p>
+ * <p>
+ * Protocol extension. See
+ * https://github.com/dzavalishin/mqtt_udp/wiki/Tagged-Tail
+ * </p>
  * 
  * @author dz
  *
  */
 public abstract class TaggedTailRecord {
 
-
-
 	protected final int rawLength;
 	protected final byte tag;
 
-
-	public int getRawLength() { return rawLength; }
-	public byte getTag() { return tag; }
-
-	protected TaggedTailRecord(byte tag, int rawLngth)
-	{
-		this.tag = tag;
-		rawLength = rawLngth;		
+	public int getRawLength() {
+		return rawLength;
 	}
 
+	public byte getTag() {
+		return tag;
+	}
+
+	protected TaggedTailRecord(byte tag, int rawLngth) {
+		this.tag = tag;
+		rawLength = rawLngth;
+	}
 
 	/**
-	 * <p>Decode tail of packet, all the attached TTRs.
+	 * <p>
+	 * Decode tail of packet, all the attached TTRs.
 	 * 
-	 * <p>Finds out and returns position of Signature TTR, so that outside code can
+	 * <p>
+	 * Finds out and returns position of Signature TTR, so that outside code can
 	 * check if packet signed ok. Outside code must calculate signature locally
 	 * for part of the packet preceding signature TTR. Including, of course,
 	 * classic MQTT packet part.
 	 * 
-	 * @param raw Tail of the packet, everything after the classic MQTT payload size.
-	 * @param signaturePos (Return!) Position of signature TTR in raw.  
+	 * @param raw          Tail of the packet, everything after the classic MQTT
+	 *                     payload size.
+	 * @param signaturePos (Return!) Position of signature TTR in raw.
 	 * @return Collection of TTRs discovered.
 	 */
-	public static Collection<TaggedTailRecord> fromBytesAll(  byte[] raw, AtomicReference<Integer> signaturePos )
-	{
+	public static Collection<TaggedTailRecord> fromBytesAll(byte[] raw, AtomicReference<Integer> signaturePos)
+			throws MqttProtocolException {
 		ArrayList<TaggedTailRecord> out = new ArrayList<>();
-		
+
 		int sig_pos = -1;
-		
+
 		final int len = raw.length;
 		int eaten = 0;
-		
-		while( (len - eaten) > 0)
-		{
-			int tailLen = len-eaten;
+
+		while ((len - eaten) > 0) {
+			int tailLen = len - eaten;
 			byte[] tail = new byte[tailLen];
 			System.arraycopy(raw, eaten, tail, 0, tailLen);
-			TaggedTailRecord ttr = fromBytes(tail);
+
+			TaggedTailRecord ttr;
+			try {
+				ttr = fromBytes(tail);
+			} catch (MqttProtocolException e) {
+				GlobalErrorHandler.handleError(ErrorType.Protocol,
+						"Malformed TTR at offset " + eaten + ": " + e.getMessage());
+				break; // stop decoding further TTRs
+			}
+
 			out.add(ttr);
-			
-			if( ttr instanceof TTR_Signature )
-			{
+
+			if (ttr instanceof TTR_Signature) {
 				// We need to record signature position to be able to
 				// calculate local signature, which is calculated for
 				// part of the packet preceding signature TTR.
@@ -71,137 +87,148 @@ public abstract class TaggedTailRecord {
 				//
 				sig_pos = eaten;
 			}
-			
+
+			if (ttr.getRawLength() <= 0)
+				break; // prevent infinite loop on corrupt data
+
 			eaten += ttr.getRawLength();
 		}
-		
+
 		signaturePos.set(sig_pos);
 		return out;
 	}
-	
-	
-	public static TaggedTailRecord fromBytes(  byte[] raw )
-	{
+
+	public static TaggedTailRecord fromBytes(byte[] raw) throws MqttProtocolException {
+		if (raw.length < 2)
+			throw new MqttProtocolException("TTR too short: " + raw.length + " bytes");
+
 		int rawLength = 1; // tag
 		byte tag = raw[0];
 
 		int dlen = 0;
 		int pos = 1;
+		int multiplier = 1;
 
-		while(true)
-		{
+		while (true) {
+			if (pos >= raw.length)
+				throw new MqttProtocolException("TTR length field extends beyond available data");
+
 			rawLength++;
 
-			byte b = raw[pos++];
-			dlen |= b & ~0x80;
+			int b = raw[pos++] & 0xFF;
 
-			if( (b & 0x80) == 0 )
+			dlen += (b & 0x7F) * multiplier;
+			multiplier *= 128;
+
+			if ((b & 0x80) == 0)
 				break;
-
-			dlen <<= 7;
 		}
 
 		rawLength += dlen;
 
-		byte[] rec = new byte[dlen];	    
+		if (pos + dlen > raw.length)
+			throw new MqttProtocolException("TTR data length (" + dlen + ") extends beyond available data ("
+					+ (raw.length - pos) + " bytes remaining)");
+
+		byte[] rec = new byte[dlen];
 		System.arraycopy(raw, pos, rec, 0, dlen);
 
-		return decodeRecord( tag, rec, rawLength );
+		return decodeRecord(tag, rec, rawLength);
 	}
 
-
-	private static TaggedTailRecord decodeRecord( byte tag, byte[] rec, int rawLength) {
-		switch(tag)
-		{
-		case 'n':	return new TTR_PacketNumber( tag, rec, rawLength );
-		case 'r':	return new TTR_ReplyTo( tag, rec, rawLength );
-		case 's':	return new TTR_Signature( tag, rec, rawLength );
-		default: break;
+	private static TaggedTailRecord decodeRecord(byte tag, byte[] rec, int rawLength) {
+		switch (tag) {
+			case 'n':
+				return new TTR_PacketNumber(tag, rec, rawLength);
+			case 'r':
+				return new TTR_ReplyTo(tag, rec, rawLength);
+			case 's':
+				return new TTR_Signature(tag, rec, rawLength);
+			default:
+				break;
 		}
 
-		return new TTR_Invalid( tag, rawLength );
+		return new TTR_Invalid(tag, rawLength);
 	}
 
 	/**
 	 * Convert this record to bytes to send out.
+	 * 
 	 * @return binary representation.
 	 */
 	public abstract byte[] toBytes();
 
-
-
 	/**
-	 * Used by subclasses to encode selves.  
-	 * @param tag Tag of record.
+	 * Used by subclasses to encode selves.
+	 * 
+	 * @param tag  Tag of record.
 	 * @param data Data to put
 	 * @return Complete binary representation to attach to packet and send.
 	 */
-	public static byte[] toBytes( byte tag, byte [] data)
-	{
+	public static byte[] toBytes(byte tag, byte[] data) {
 		int len = data.length;
 
 		// lazy impl, supports < 127 len only
 
-		if( (len > 0x7F) || (len < 0 ) )
-			throw new MqttUdpRuntimeException(String.format( "TTR too long for tag %X", tag));
+		if ((len > 0x7F) || (len < 0))
+			throw new MqttUdpRuntimeException(String.format("TTR too long for tag %X", tag));
 
-		byte [] out = new byte[len+2];
+		byte[] out = new byte[len + 2];
 
 		out[0] = tag;
-		out[1] = (byte) ( len & 0x7F );
+		out[1] = (byte) (len & 0x7F);
 
 		System.arraycopy(data, 0, out, 2, len);
 
 		return out;
 	}
 
-	static public int htonl(int value) 
-	{
-		if(ByteOrder.nativeOrder().equals(ByteOrder.BIG_ENDIAN)) 
-		{
+	static public int htonl(int value) {
+		if (ByteOrder.nativeOrder().equals(ByteOrder.BIG_ENDIAN)) {
 			return value;
 		}
 		return Integer.reverseBytes(value);
-	}	
-
+	}
 
 	/*
-	public static ArrayList<TaggedTailRecord> preprocessBeforeSend( AbstractCollection<TaggedTailRecord> in )
-	{
-		ArrayList<TaggedTailRecord> out = new ArrayList<>(in.size());
-		
-		TaggedTailRecord sig = null;
-		boolean haveNumber = false;
-		
-		if( in != null )
-			for( TaggedTailRecord r : in )
-		{
-			if( r instanceof TTR_Signature )
-			{
-				sig = r;
-				continue;
-			}
+	 * public static ArrayList<TaggedTailRecord> preprocessBeforeSend(
+	 * AbstractCollection<TaggedTailRecord> in )
+	 * {
+	 * ArrayList<TaggedTailRecord> out = new ArrayList<>(in.size());
+	 * 
+	 * TaggedTailRecord sig = null;
+	 * boolean haveNumber = false;
+	 * 
+	 * if( in != null )
+	 * for( TaggedTailRecord r : in )
+	 * {
+	 * if( r instanceof TTR_Signature )
+	 * {
+	 * sig = r;
+	 * continue;
+	 * }
+	 * 
+	 * if( r instanceof TTR_PacketNumber )
+	 * haveNumber = true;
+	 * 
+	 * out.add(r);
+	 * }
+	 * 
+	 * // Add packet number to list, if none
+	 * if( !haveNumber )
+	 * out.add(new TTR_PacketNumber());
+	 * 
+	 * // Signature must be last one - NO, it is impossible for signature to be here
+	 * if( sig != null )
+	 * //out.add(sig);
+	 * //throw new MqttUdpRuntimeException("Signature must be generated later");
+	 * GlobalErrorHandler.handleError(ErrorType.Protocol,
+	 * "Signature must be generated later");
+	 * 
+	 * return out;
+	 * }
+	 */
 
-			if( r instanceof TTR_PacketNumber )
-				haveNumber = true;
-			
-			out.add(r);
-		}
-		
-		// Add packet number to list, if none
-		if( !haveNumber )
-			out.add(new TTR_PacketNumber());
-		
-		// Signature must be last one - NO, it is impossible for signature to be here
-		if( sig != null )
-			//out.add(sig);
-			//throw new MqttUdpRuntimeException("Signature must be generated later");
-			GlobalErrorHandler.handleError(ErrorType.Protocol, "Signature must be generated later");
-		
-		return out;
-	}
-	*/
-	
 	@Override
 	public String toString() {
 		return String.format("TTR type '%c'", tag);

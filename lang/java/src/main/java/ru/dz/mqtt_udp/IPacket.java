@@ -44,90 +44,90 @@ public interface IPacket {
 	 */
 	public int getType();
 
-	
-	
-	
-	
-	
-	
-	
-	/**
-	 * Construct packet object from binary data (recvd from net).
-	 * 
-	 * @param raw binary data from UDP packet
-	 * @param from source address
-	 * @return Packet object
-	 * @throws MqttProtocolException on incorrect binary packet data
-	 */
-	public static IPacket fromBytes( byte[] raw, IPacketAddress from ) throws MqttProtocolException
-	{		
-	    int total_len = 0;
-	    int headerEnd = 1;
 
-	    while(true)
-	    {
-	        byte b = raw[headerEnd++];
-	        total_len |= b & ~0x80;
 
-	        if( (b & 0x80) == 0 )
-	            break;
 
-	        total_len <<= 7;
-	    }
 
-	    // total_len is length of classic MQTT packet's payload, 
-	    // not including type byte & length field 
-	    
-	    int recvLen = raw.length - headerEnd;
-	    
-	    // recvLen is all the packet size minus header
-	    
-	    Collection<TaggedTailRecord> ttrs = null;
 
-	    if( recvLen < total_len)
-	    	throw new MqttProtocolException("packet decoded size ("+total_len+") > packet length ("+recvLen+")");	    
-	    
-	    // We have bytes after classic MQTT packet, must be TTRs, decode 'em
-	    if(recvLen > total_len) 
-	    {
-	    	ttrs = decodeTTRs(raw, total_len, headerEnd, recvLen);
-	    }
-	    
-	    byte[] sub = new byte[total_len];	    
-	    System.arraycopy(raw, headerEnd, sub, 0, total_len);
-	    
-	    int ptype = 0xF0 & (int)(raw[0]);
-	    int flags = 0x0F & (int)(raw[0]);
-	    
-	    GenericPacket p;
-		switch(ptype)
-		{
-		case mqtt_udp_defs.PTYPE_PUBLISH:
-			p = new PublishPacket(sub, (byte)flags, from);
-			break;
 
-		case mqtt_udp_defs.PTYPE_PUBACK:
-			p = new PubAckPacket(sub, (byte)flags, from);
-			break;
 
-		case mqtt_udp_defs.PTYPE_PINGREQ:
-			p = new PingReqPacket(sub, (byte)flags, from);
-			break;
-			
-		case mqtt_udp_defs.PTYPE_PINGRESP:
-			p = new PingRespPacket(sub, (byte)flags, from);
-			break;
+    /**
+     * Construct packet object from binary data (recvd from net).
+     * * @param raw binary data from UDP packet
+     * @param from source address
+     * @return Packet object
+     * @throws MqttProtocolException on incorrect binary packet data
+     */
+    public static IPacket fromBytes( byte[] raw, IPacketAddress from ) throws MqttProtocolException
+    {
+        int total_len = 0;
+        int headerEnd = 1;
+        int multiplier = 1;
 
-		case mqtt_udp_defs.PTYPE_SUBSCRIBE:
-			p = new SubscribePacket(sub, (byte)flags, from);
-			break;
-			
-		default:
-				throw new MqttProtocolException("Unknown pkt type "+raw[0]);
-		}
-		
-		return p.applyTTRs(ttrs);
-	}
+        while(true)
+        {
+            int b = raw[headerEnd++] & 0xFF;
+
+            total_len += (b & 0x7F) * multiplier;
+            multiplier *= 128;
+
+            if( (b & 0x80) == 0 )
+                break;
+        }
+
+        // total_len is length of classic MQTT packet's payload,
+        // not including type byte & length field
+
+        int recvLen = raw.length - headerEnd;
+
+        // recvLen is all the packet size minus header
+
+        Collection<TaggedTailRecord> ttrs = null;
+
+        if( recvLen < total_len)
+            throw new MqttProtocolException("packet decoded size ("+total_len+") > packet length ("+recvLen+")");
+
+        // We have bytes after classic MQTT packet, must be TTRs, decode 'em
+        if(recvLen > total_len)
+        {
+            ttrs = decodeTTRs(raw, total_len, headerEnd, recvLen);
+        }
+
+        byte[] sub = new byte[total_len];
+        System.arraycopy(raw, headerEnd, sub, 0, total_len);
+
+        int ptype = 0xF0 & (int)(raw[0]);
+        int flags = 0x0F & (int)(raw[0]);
+
+        GenericPacket p;
+        switch(ptype)
+        {
+            case mqtt_udp_defs.PTYPE_PUBLISH:
+                p = new PublishPacket(sub, (byte)flags, from);
+                break;
+
+            case mqtt_udp_defs.PTYPE_PUBACK:
+                p = new PubAckPacket(sub, (byte)flags, from);
+                break;
+
+            case mqtt_udp_defs.PTYPE_PINGREQ:
+                p = new PingReqPacket(sub, (byte)flags, from);
+                break;
+
+            case mqtt_udp_defs.PTYPE_PINGRESP:
+                p = new PingRespPacket(sub, (byte)flags, from);
+                break;
+
+            case mqtt_udp_defs.PTYPE_SUBSCRIBE:
+                p = new SubscribePacket(sub, (byte)flags, from);
+                break;
+
+            default:
+                throw new MqttProtocolException("Unknown pkt type "+raw[0]);
+        }
+
+        return p.applyTTRs(ttrs);
+    }
 
 	public static Collection<TaggedTailRecord> decodeTTRs(byte[] raw, int total_len, int headerEnd, int recvLen)
 			throws MqttProtocolException {
