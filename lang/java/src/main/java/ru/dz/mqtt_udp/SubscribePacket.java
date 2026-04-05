@@ -74,7 +74,7 @@ public class SubscribePacket extends TopicPacket {
 
 		byte [] pkt = new byte[plen]; 
 
-		pkt[0] = (byte) (((tbytes.length >>8) & 0xFF) | (flags & 0x0F)); // TODO encodeTotalLength does it?
+		pkt[0] = (byte) ((tbytes.length >>8) & 0xFF);
 		pkt[1] = (byte) (tbytes.length & 0xFF);
 
 		System.arraycopy(tbytes, 0, pkt, 2, tbytes.length);

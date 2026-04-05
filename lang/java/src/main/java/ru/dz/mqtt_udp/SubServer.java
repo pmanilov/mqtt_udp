@@ -30,11 +30,17 @@ public abstract class SubServer extends LoopRunner
 	}
 
 	@Override
-	protected void step() throws IOException, MqttProtocolException 
+	protected void step() throws IOException, MqttProtocolException
 	{
 		IPacket p = GenericPacket.recv(s);
-		if(!muted) preprocessPacket(p);			
-		processPacket(p);			
+		if(!muted) preprocessPacket(p);
+		// Suppress QoS>0 PUBLISH duplicates that arrive when a PUBACK is lost.
+		// The PUBACK for the retransmit is still sent by preprocessPacket above,
+		// so the sender can clear its resend queue; we only skip re-delivery
+		// to the application.
+		if (p instanceof PublishPacket && Engine.isDuplicatePublish((PublishPacket) p))
+			return;
+		processPacket(p);
 	}
 
 	@Override
@@ -158,7 +164,7 @@ public abstract class SubServer extends LoopRunner
 		}
 		else if( p instanceof PublishPacket) {
 			PublishPacket pp = (PublishPacket) p;
-			
+
 			int qos = pp.getQoS();
 			if( qos != 0 )
 			{
@@ -167,6 +173,10 @@ public abstract class SubServer extends LoopRunner
 				qos = Integer.min(qos, maxQos);
 				new PubAckPacket(pp, qos).send();
 			}
+		}
+		else if( p instanceof PubAckPacket) {
+			// Match incoming ACKs against outgoing QoS packets awaiting confirmation
+			Engine.handleIncomingAck((PubAckPacket) p);
 		}
 
 	}

@@ -295,7 +295,13 @@ public interface IPacket {
 			if( p.getPacketNumber().isPresent() )
 				outs.add(new TTR_PacketNumber( p.getPacketNumber().get() ).toBytes());
 			else
-				outs.add(new TTR_PacketNumber().toBytes());
+			{
+				// Store the generated id back on the packet so that
+				// QoS resend queue can locate it by number later.
+				TTR_PacketNumber tpn = new TTR_PacketNumber();
+				p.setPacketNumber(tpn.getValue());
+				outs.add(tpn.toBytes());
+			}
 		}
 
 		int totalLen = packetBeginning.length;

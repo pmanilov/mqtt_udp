@@ -25,10 +25,12 @@ public class PublishPacket extends TopicPacket {
 	 * @param flags Flags from packet header.
 	 * @param from Source IP address.
 	 */
-	public PublishPacket(byte[] raw, byte flags, IPacketAddress from) {
+	public PublishPacket(byte[] raw, byte flags, IPacketAddress from) throws MqttProtocolException {
 		super(from);
 		this.flags = flags;
+                if (raw.length < 2) throw new MqttProtocolException("Payload too short for topic length");
 		int tlen = IPacket.decodeTopicLen( raw );
+                if (tlen < 0 || tlen + 2 > raw.length) throw new MqttProtocolException(String.format("Invalid topic length %d for payload length %d", tlen, raw.length));
 
 		topic = new String(raw, 2, tlen, Charset.forName(MQTT_CHARSET));
 		
@@ -137,7 +139,7 @@ public class PublishPacket extends TopicPacket {
 					
 		byte [] pkt = new byte[plen]; 
 
-		pkt[0] = (byte) (((tbytes.length >>8) & 0xFF) | (flags & 0x0F)); // TODO encodeTotalLength does it?
+		pkt[0] = (byte) ((tbytes.length >>8) & 0xFF);
 		pkt[1] = (byte) (tbytes.length & 0xFF);
 		
 		System.arraycopy(tbytes, 0, pkt, 2, tbytes.length);

@@ -12,6 +12,7 @@ import java.util.Optional;
 import ru.dz.mqtt_udp.Engine;
 import ru.dz.mqtt_udp.IPacket;
 import ru.dz.mqtt_udp.MqttProtocolException;
+import ru.dz.mqtt_udp.PublishPacket;
 import ru.dz.mqtt_udp.io.IPacketAddress;
 import ru.dz.mqtt_udp.io.IpAddress;
 import ru.dz.mqtt_udp.io.SingleSendSocket;
@@ -156,7 +157,8 @@ public abstract class GenericPacket implements IPacket {
 		sentCounter++;
 		// System.out.println("UDP sent "+pkt.length);
 		resendAddress = address;
-		if (getQoS() != 0)
+		// Only PUBLISH is retransmitted until ack'd; PUBACK/PING/etc. are fire-and-forget.
+		if (getQoS() != 0 && this instanceof PublishPacket)
 			Engine.queueForResend(this);
 	}
 
